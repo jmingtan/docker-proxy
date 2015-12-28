@@ -5,30 +5,34 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"net/http"
 	"log"
-	"net/http/httputil"
 	"net/url"
+	"net"
+	"io"
 )
 
-type ProxyHandler struct {
-	proxy *httputil.ReverseProxy
+func copyData(src net.Conn, dst net.Conn) {
+	_, _ = io.Copy(src, dst)
+	src.Close()
+	dst.Close()
 }
 
-func (p *ProxyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	p.proxy.ServeHTTP(w, req)
-}
-
-func NewProxyHandler(proxyUrl *url.URL) *ProxyHandler {
-	return &ProxyHandler{httputil.NewSingleHostReverseProxy(proxyUrl)}
-}
-
-func newURL(urlStr string) *url.URL {
-	url, err := url.Parse(urlStr)
-	if err != nil {
-		log.Fatal("url.Parse: ", err)
+func makeProxy(port, address string) {
+	ln, err := net.Listen("tcp", port)
+	if (err == nil) {
+		go func() {
+			for {
+				srcConn, srcErr := ln.Accept()
+				dstConn, dstErr := net.Dial("tcp", address)
+				if (srcErr == nil && dstErr == nil) {
+					go copyData(srcConn, dstConn)
+					go copyData(dstConn, srcConn)
+				} else {
+					log.Println("src:", srcErr, ", dst:", dstErr)
+				}
+			}
+		}()
 	}
-	return url
 }
 
 func main() {
@@ -36,23 +40,15 @@ func main() {
 	hosturl, _ := url.Parse(host)
 	ip := strings.Split(hosturl.Host, ":")[0]
 	log.Printf("docker host address: %s", ip)
+	quit := make(chan int)
 	client, _ := docker.NewClientFromEnv()
 	containers, _ := client.ListContainers(docker.ListContainersOptions{})
-	quit := make(chan int)
 	for _, c := range containers {
 		for _, p := range c.Ports {
 			port := ":" + strconv.FormatInt(p.PublicPort, 10)
-			address := "http://" + ip + port
+			address := ip + port
 			log.Printf("discovered container port: %s", address)
-
-			proxy := NewProxyHandler(newURL(address))
-			go func() {
-				err := http.ListenAndServe(port, proxy)
-				if err != nil {
-					log.Fatal("ListenAndServe: ", err)
-				}
-				quit <- 0
-			}()
+			makeProxy(port, address)
 		}
 	}
 	<-quit
