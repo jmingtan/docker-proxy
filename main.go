@@ -2,13 +2,13 @@ package main
 
 import (
 	"github.com/fsouza/go-dockerclient"
+	"io"
+	"log"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
-	"log"
-	"net/url"
-	"net"
-	"io"
 )
 
 func copyData(src net.Conn, dst net.Conn) {
@@ -19,12 +19,12 @@ func copyData(src net.Conn, dst net.Conn) {
 
 func makeProxy(port, address string) {
 	ln, err := net.Listen("tcp", port)
-	if (err == nil) {
+	if err == nil {
 		go func() {
 			for {
 				srcConn, srcErr := ln.Accept()
 				dstConn, dstErr := net.Dial("tcp", address)
-				if (srcErr == nil && dstErr == nil) {
+				if srcErr == nil && dstErr == nil {
 					go copyData(srcConn, dstConn)
 					go copyData(dstConn, srcConn)
 				} else {
